@@ -1,11 +1,14 @@
 ﻿using Dapper;
+using LevelUpClone.Application.Abstractions;   // <- IUserService aqui
+using LevelUpClone.Domain.Entities;
 using LevelUpClone.Domain.Enums;
 using LevelUpClone.Domain.Interfaces;
 using LevelUpClone.Infrastructure.Persistence;
 using LevelUpClone.Infrastructure.Security;
 using Npgsql;
+using System.Text.Json;
 
-namespace LevelUpClone.Infrastructure.Repositories
+namespace LevelUpClone.Infrastructure.Repositories.Postgres
 {
     public sealed class UserRepositoryPg : IUserRepository
     {
@@ -48,8 +51,8 @@ namespace LevelUpClone.Infrastructure.Repositories
             using var conn = _factory.Open();
             var sql = """
             SELECT "ActivityId", "ActivityName", "ActivityKind", "DefaultPoints", "IsActive"
-            FROM "Activity"
-            WHERE @onlyActive = FALSE OR "IsActive" = TRUE;
+              FROM "Activity"
+             WHERE @onlyActive = FALSE OR "IsActive" = TRUE;
             """;
             return conn.Query<(int, string, int, int, bool)>(sql, new { onlyActive });
         }
@@ -119,11 +122,7 @@ namespace LevelUpClone.Infrastructure.Repositories
     public sealed class UserServicePg : IUserService
     {
         private readonly PostgresConnectionFactory _factory;
-
-        public UserServicePg(PostgresConnectionFactory factory)
-        {
-            _factory = factory;
-        }
+        public UserServicePg(PostgresConnectionFactory factory) => _factory = factory;
 
         public async Task<bool> ValidateAsync(string userName, string password)
         {
@@ -133,14 +132,13 @@ namespace LevelUpClone.Infrastructure.Repositories
             using var conn = _factory.Open();
             var row = await conn.QueryFirstOrDefaultAsync<(string? PasswordHash, bool IsActive)>(
                 """
-            SELECT "PasswordHash", "IsActive"
-              FROM "UserAccount"
-             WHERE "UserName" = @userName
-            """,
+                SELECT "PasswordHash", "IsActive"
+                  FROM "UserAccount"
+                 WHERE lower("UserName") = lower(@userName)
+                """,
                 new { userName });
 
             if (row.PasswordHash is null || !row.IsActive) return false;
-
             return PasswordHasher.Verify(password, row.PasswordHash);
         }
 
@@ -150,12 +148,112 @@ namespace LevelUpClone.Infrastructure.Repositories
             using var conn = _factory.Open();
             await conn.ExecuteAsync(
                 """
-            UPDATE "UserAccount" SET "PasswordHash" = @hash
-             WHERE "UserName" = @userName
-            """,
+                UPDATE "UserAccount" SET "PasswordHash" = @hash
+                 WHERE lower("UserName") = lower(@userName)
+                """,
                 new { userName, hash });
+        }
+
+        public sealed class GeoClientLogRepositoryPg(PostgresConnectionFactory factory) : IGeoClientLogRepository
+        {
+            private readonly PostgresConnectionFactory _factory = factory;
+
+            public async Task<long> InsertAsync(GeoClientLogEntry e)
+            {
+                const string sql = """
+        INSERT INTO "GeoClientLog"
+        (
+          "UserAccountId","RemoteIp","ForwardedFor","UserAgent",
+          "Latitude","Longitude","AccuracyMeters","AltitudeMeters","AltitudeAccuracyMeters",
+          "SpeedMetersPerSecond","HeadingDegrees","TimestampEpochMs",
+          "City","EnrichGranularity","EnrichCountry","EnrichUF","EnrichMunicipio",
+          "EnrichCodigoMunicipioIBGE","EnrichBairro","EnrichLogradouro","EnrichNumero",
+          "EnrichCEP","EnrichTimezoneId","EnrichConfidence","EnrichSourcesJson","EnrichAttribution",
+          "EnvBrowser","EnvBrowserVersion","EnvOperatingSystem","EnvOSVersion","EnvArchitecture",
+          "EnvDeviceType","EnvDeviceModel","EnvTouchPoints","EnvIsBot","EnvBotName","EnvLanguage",
+          "EnvLanguagesJson","EnvPlatform","EnvIsOnline","EnvTimeZone","EnvScreenWidth","EnvScreenHeight",
+          "EnvDevicePixelRatio","EnvReferrer","EnvPageUrl",
+          "NetDownlink","NetEffectiveType","NetRtt","NetSaveData",
+          "Error","CorrelationId","SessionId"
+        )
+        VALUES
+        (
+          @UserAccountId,@RemoteIp,@ForwardedFor,@UserAgent,
+          @Latitude,@Longitude,@AccuracyMeters,@AltitudeMeters,@AltitudeAccuracyMeters,
+          @SpeedMetersPerSecond,@HeadingDegrees,@TimestampEpochMs,
+          @City,@EnrichGranularity,@EnrichCountry,@EnrichUF,@EnrichMunicipio,
+          @EnrichCodigoMunicipioIBGE,@EnrichBairro,@EnrichLogradouro,@EnrichNumero,
+          @EnrichCEP,@EnrichTimezoneId,@EnrichConfidence,
+          CAST(@EnrichSourcesJson AS jsonb),@EnrichAttribution,
+          @EnvBrowser,@EnvBrowserVersion,@EnvOperatingSystem,@EnvOSVersion,@EnvArchitecture,
+          @EnvDeviceType,@EnvDeviceModel,@EnvTouchPoints,@EnvIsBot,@EnvBotName,@EnvLanguage,
+          CAST(@EnvLanguagesJson AS jsonb),@EnvPlatform,@EnvIsOnline,@EnvTimeZone,@EnvScreenWidth,@EnvScreenHeight,
+          @EnvDevicePixelRatio,@EnvReferrer,@EnvPageUrl,
+          @NetDownlink,@NetEffectiveType,@NetRtt,@NetSaveData,
+          @Error,@CorrelationId,@SessionId
+        )
+        RETURNING "Id";
+        """;
+
+                await using var conn = (NpgsqlConnection)_factory.Open();
+                var id = await conn.ExecuteScalarAsync<long>(sql, new
+                {
+                    e.UserAccountId,
+                    e.RemoteIp,
+                    e.ForwardedFor,
+                    e.UserAgent,
+                    e.Latitude,
+                    e.Longitude,
+                    e.AccuracyMeters,
+                    e.AltitudeMeters,
+                    e.AltitudeAccuracyMeters,
+                    e.SpeedMetersPerSecond,
+                    e.HeadingDegrees,
+                    e.TimestampEpochMs,
+                    e.City,
+                    e.EnrichGranularity,
+                    e.EnrichCountry,
+                    e.EnrichUF,
+                    e.EnrichMunicipio,
+                    e.EnrichCodigoMunicipioIBGE,
+                    e.EnrichBairro,
+                    e.EnrichLogradouro,
+                    e.EnrichNumero,
+                    e.EnrichCEP,
+                    e.EnrichTimezoneId,
+                    e.EnrichConfidence,
+                    EnrichSourcesJson = e.EnrichSourcesJson is null ? null : JsonSerializer.Serialize(e.EnrichSourcesJson),
+                    e.EnrichAttribution,
+                    e.EnvBrowser,
+                    e.EnvBrowserVersion,
+                    e.EnvOperatingSystem,
+                    e.EnvOSVersion,
+                    e.EnvArchitecture,
+                    e.EnvDeviceType,
+                    e.EnvDeviceModel,
+                    e.EnvTouchPoints,
+                    e.EnvIsBot,
+                    e.EnvBotName,
+                    e.EnvLanguage,
+                    EnvLanguagesJson = e.EnvLanguagesJson is null ? null : JsonSerializer.Serialize(e.EnvLanguagesJson),
+                    e.EnvPlatform,
+                    e.EnvIsOnline,
+                    e.EnvTimeZone,
+                    e.EnvScreenWidth,
+                    e.EnvScreenHeight,
+                    e.EnvDevicePixelRatio,
+                    e.EnvReferrer,
+                    e.EnvPageUrl,
+                    e.NetDownlink,
+                    e.NetEffectiveType,
+                    e.NetRtt,
+                    e.NetSaveData,
+                    e.Error,
+                    e.CorrelationId,
+                    e.SessionId
+                });
+                return id;
+            }
         }
     }
 }
-
-

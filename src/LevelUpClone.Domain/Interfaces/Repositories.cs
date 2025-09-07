@@ -1,3 +1,4 @@
+using LevelUpClone.Domain.Entities;
 using LevelUpClone.Domain.Enums;
 
 namespace LevelUpClone.Domain.Interfaces;
@@ -18,6 +19,11 @@ public interface IActivityLogRepository
 {
     long Log(int userId, DateOnly activityDate, int? activityId, FundamentalCode? fundamentalCode, int pointsAwarded, string? notesText);
     int GetDailyScore(int userId, DateOnly activityDate);
+}
+
+public interface IGeoClientLogRepository
+{
+    Task<long> InsertAsync(GeoClientLogEntry entry);
 }
 
 public interface IUnitOfWork

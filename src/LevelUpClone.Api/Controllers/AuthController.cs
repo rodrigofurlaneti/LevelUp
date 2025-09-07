@@ -1,7 +1,8 @@
 using LevelUpClone.Api.Contracts.Requests;
 using LevelUpClone.Api.Contracts.Responses;
-using LevelUpClone.Application.Abstractions;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+using LevelUpClone.Application.Abstractions;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -13,28 +14,23 @@ namespace LevelUpClone.Api.Controllers
     [Route("api/auth")]
     public sealed class AuthController(IConfiguration configuration, IUserService userService) : ControllerBase
     {
-        private readonly IConfiguration _configuration;
-        private readonly IUserService _userService;
+        // Com construtor primário, inicialize os campos assim:
+        private readonly IConfiguration _configuration = configuration;
+        private readonly IUserService _userService = userService;
 
-        public AuthController(IConfiguration configuration, IUserService userService) : base()
-        {
-            _configuration = configuration;
-            _userService = userService;
-        }
-
+        [AllowAnonymous]
         [HttpPost("login")]
-        public ActionResult<LoginResponse> Login([FromBody] LoginRequest req)
+        public async Task<ActionResult<LoginResponse>> Login([FromBody] LoginRequest req)
         {
+            if (req is null)
+                return BadRequest("Body é obrigatório.");
             if (string.IsNullOrWhiteSpace(req.UserName))
-                return BadRequest("UserName invalid credentials");
+                return BadRequest("UserName inválido.");
             if (string.IsNullOrWhiteSpace(req.Password))
-                return BadRequest("Password invalid credentials");
-            if (string.IsNullOrWhiteSpace(req.UserName) || string.IsNullOrWhiteSpace(req.Password))
-                return BadRequest("Invalid credentials");
+                return BadRequest("Password inválido.");
 
-            var existUsernameAndPassword = await _userService.ValidateAsync(req.UserName, req.Password);
-
-            if (!existUsernameAndPassword)
+            var ok = await _userService.ValidateAsync(req.UserName, req.Password);
+            if (!ok)
                 return Unauthorized();
 
             var jwtSection = _configuration.GetSection("Jwt");
@@ -46,9 +42,11 @@ namespace LevelUpClone.Api.Controllers
                 string.IsNullOrWhiteSpace(audience) ||
                 string.IsNullOrWhiteSpace(keyValue))
             {
-                return Problem(title: "JWT misconfiguration",
-                               detail: "Issuer/Audience/Key are required in configuration.",
-                               statusCode: StatusCodes.Status500InternalServerError);
+                return Problem(
+                    title: "JWT misconfiguration",
+                    detail: "Issuer/Audience/Key são obrigatórios em appsettings.",
+                    statusCode: StatusCodes.Status500InternalServerError
+                );
             }
 
             var expiresAtUtc = DateTime.UtcNow.AddHours(1);
@@ -75,17 +73,17 @@ namespace LevelUpClone.Api.Controllers
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
             var claims = new List<Claim>
-        {
-            new(ClaimTypes.Name, userName),
-            new(ClaimTypes.NameIdentifier, userName), // ajuste para o ID real se tiver
-            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N"))
-        };
+            {
+                new(ClaimTypes.Name, userName),
+                new(ClaimTypes.NameIdentifier, userName), // troque pelo ID real quando tiver
+                new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N"))
+            };
 
             var token = new JwtSecurityToken(
                 issuer: issuer,
                 audience: audience,
                 claims: claims,
-                notBefore: DateTime.UtcNow,   // opcional
+                notBefore: DateTime.UtcNow,
                 expires: expiresAtUtc,
                 signingCredentials: creds
             );

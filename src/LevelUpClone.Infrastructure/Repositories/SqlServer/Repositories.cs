@@ -3,7 +3,7 @@ using LevelUpClone.Domain.Enums;
 using LevelUpClone.Domain.Interfaces;
 using LevelUpClone.Infrastructure.Persistence;
 
-namespace LevelUpClone.Infrastructure.Repositories;
+namespace LevelUpClone.Infrastructure.Repositories.SqlServer;
 
 public sealed class UserRepository : IUserRepository
 {

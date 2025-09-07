@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <ProjectReference Include="..\LevelUpClone.Application\LevelUpClone.Application.csproj" />
     <ProjectReference Include="..\LevelUpClone.Domain\LevelUpClone.Domain.csproj" />
   </ItemGroup>
   <ItemGroup>

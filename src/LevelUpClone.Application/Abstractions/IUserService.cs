@@ -1,9 +1,8 @@
-﻿using System;
-namespace LevelUpClone.Application.Abstractions
+﻿namespace LevelUpClone.Application.Abstractions
 {
     public interface IUserService
     {
-        Task<bool> ValidateAsync(string UserName, string Password);
-        Task SetPasswordAsync(int UserId, string NewPassword);
+        Task<bool> ValidateAsync(string userName, string password);
+        Task SetPasswordAsync(string userName, string newPassword);
     }
 }

@@ -13,7 +13,8 @@ public sealed class ActivityLog
     public string? NotesText { get; private set; }
     public DateTime CreatedAtUtc { get; private set; }
 
-    public ActivityLog(long logId, int userId, int? activityId, FundamentalCode? fundamentalCode, DateOnly activityDate, int pointsAwarded, string? notesText, DateTime createdAtUtc)
+    public ActivityLog(long logId, int userId, int? activityId, FundamentalCode? fundamentalCode, 
+        DateOnly activityDate, int pointsAwarded, string? notesText, DateTime createdAtUtc)
     {
         LogId = logId;
         UserId = userId;

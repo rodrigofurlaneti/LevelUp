@@ -1,0 +1,46 @@
+﻿body {
+    background: radial-gradient(1100px 520px at 70% -10%, #eaf1ff 0%, transparent 60%) no-repeat;
+}
+
+.login-wrapper {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.login-card {
+    width: 100%;
+    max-width: 520px;
+    border-radius: 16px;
+    box-shadow: 0 12px 30px rgba(0,0,0,.08);
+}
+
+.brand-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #1a73e8;
+    display: inline-block;
+    margin-right: .5rem;
+}
+
+.form-control:focus {
+    box-shadow: 0 0 0 .2rem rgba(26,115,232,.25);
+}
+
+.lang-switch {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+}
+
+    .lang-switch .btn {
+        padding: .25rem .55rem;
+    }
+
+.footer-muted {
+    font-size: .85rem;
+    color: #7a7a7a;
+}

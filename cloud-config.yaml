@@ -1,0 +1,72 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+timezone: America/Sao_Paulo
+
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - nginx
+  - ufw
+
+write_files:
+  # Nginx site para sua aplicação .NET (Kestrel em 127.0.0.1:5000)
+  - path: /etc/nginx/sites-available/dotnetapp
+    permissions: '0644'
+    content: |
+      server {
+        listen 80;
+        listen [::]:80;
+        server_name _;
+
+        # gzip básico
+        gzip on;
+        gzip_types text/plain text/css application/json application/javascript application/xml+rss application/xml text/javascript;
+
+        location / {
+          proxy_pass         http://127.0.0.1:5000;
+          proxy_http_version 1.1;
+          proxy_set_header   Upgrade $http_upgrade;
+          proxy_set_header   Connection keep-alive;
+          proxy_set_header   Host $host;
+          proxy_cache_bypass $http_upgrade;
+          proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header   X-Forwarded-Proto $scheme;
+        }
+      }
+
+  # Variáveis do SQL Server (edite a senha se quiser)
+  - path: /opt/mssql/.env
+    permissions: '0600'
+    content: |
+      MSSQL_SA_PASSWORD=ChangeThisStrong!Password123
+      MSSQL_PID=Developer
+      MSSQL_DATA_PATH=/var/opt/mssql
+
+  # Docker Compose do SQL Server 2022
+  - path: /opt/mssql/docker-compose.yml
+    permissions: '0644'
+    content: |
+      services:
+        mssql:
+          image: mcr.microsoft.com/mssql/server:2022-latest
+          container_name: mssql
+          restart: unless-stopped
+          env_file:
+            - .env
+          environment:
+            - ACCEPT_EULA=Y
+          ports:
+            - "127.0.0.1:1433:1433"          # exposto apenas no localhost
+          volumes:
+            - mssql-data:/var/opt/mssql
+      volumes:
+        mssql-data:
+
+runcmd:
+  # Repositório Microsoft para .NET 8
+  - mkdir -p /etc/apt/keyrings
+  - curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg
+  - bash -lc 'echo "de

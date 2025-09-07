@@ -2,42 +2,100 @@
 @model dynamic
 @{
     ViewData["Title"] = "Login";
-    var isPt = (Request.Cookies["lang"] ?? "pt") == "pt";
+    var lang = (Request.Cookies["lang"] ?? "pt").ToLowerInvariant();
+    var isPt = lang == "pt";
 }
-<div class="row">
-  <div class="col-md-5 mx-auto">
-    <h4 class="mb-3">@(isPt ? "Entrar" : "Sign in")</h4>
-    <div class="mb-3">
-      <label class="form-label">@(isPt ? "Usuário" : "Username")</label>
-      <input id="user" class="form-control" />
-    </div>
-    <div class="mb-3">
-      <label class="form-label">@(isPt ? "Senha" : "Password")</label>
-      <input id="pass" type="password" class="form-control" />
-    </div>
-    <button id="btnLogin" class="btn btn-primary w-100">@(isPt ? "Entrar" : "Login")</button>
-  </div>
-</div>
 
-<script>
-document.getElementById('btnLogin').addEventListener('click', async () => {
-  const user = document.getElementById('user').value.trim();
-  const pass = document.getElementById('pass').value.trim();
-  if(!user || !pass){
-    Swal.fire({icon:'warning', title:'Ops', text:'Preencha usuário e senha.'});
-    return;
-  }
-  try{
-    const res = await fetch('http://localhost:5157/api/auth/login', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ userName:user, password:pass })
-    });
-    if(!res.ok){ throw new Error('Credenciais inválidas'); }
-    const data = await res.json();
-    localStorage.setItem('auth', JSON.stringify({ token:data.token, displayName:data.displayName, exp:new Date(Date.now()+12*3600*1000).toISOString() }));
-    Swal.fire({icon:'success', title:'OK', text:'Login efetuado!'}).then(()=> location.href='/Index');
-  }catch(e){
-    Swal.fire({icon:'error', title:'Erro', text: e.message || 'Falha no login'});
-  }
-});
-</script>
+<!DOCTYPE html>
+<html lang="@(isPt ? "pt-br" : "en")">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@ViewData["Title"] - LevelUpClone</title>
+
+    <!-- Bootstrap 5 (Cosmo) + Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootswatch@5.3.3/dist/cosmo/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+
+    <!-- SweetAlert2 -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+    <!-- Auth CSS (correto: sem 'wwwroot' na URL) -->
+    <link rel="stylesheet" href="~/css/auth.css" asp-append-version="true" />
+</head>
+
+<body>
+    <!-- Seletor de idioma -->
+    <div class="lang-switch">
+        <button class="btn btn-outline-secondary btn-sm" data-lang="pt">
+            PT-BR
+            <img src="~/img/flagbrazil.png" alt="PT-BR" width="18" height="12" />
+        </button>
+        <button class="btn btn-outline-secondary btn-sm ms-1" data-lang="en">
+            EN
+            <img src="~/img/flagunitedstatesofamerica.png" alt="EN" width="18" height="12" />
+        </button>
+    </div>
+
+    <div class="login-wrapper">
+        <div class="card login-card">
+            <div class="card-body p-4 p-md-5">
+
+                <div class="mb-3">
+                    <span class="brand-dot"></span>
+                    <strong>LevelUpClone</strong>
+                    <div class="text-muted small">
+                        @(isPt ? "Entre para acessar seu painel" : "Sign in to access your dashboard")
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label" for="user">@(isPt ? "Usuário" : "Username")</label>
+                    <div class="input-group">
+                        <span class="input-group-text"><i class="bi bi-person"></i></span>
+                        <input id="user" class="form-control" autocomplete="username"
+                               placeholder="@(isPt ? "seu usuário ou e-mail" : "your username or email")" />
+                    </div>
+                </div>
+
+                <div class="mb-2">
+                    <label class="form-label" for="pass">@(isPt ? "Senha" : "Password")</label>
+                    <div class="input-group">
+                        <span class="input-group-text"><i class="bi bi-lock"></i></span>
+                        <input id="pass" type="password" class="form-control" autocomplete="current-password"
+                               placeholder="@(isPt ? "sua senha" : "your password")" />
+                        <button type="button" class="btn btn-outline-secondary" id="togglePwd"
+                                title="@(isPt ? "Mostrar/ocultar senha" : "Show/hide password")">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="remember" checked />
+                        <label class="form-check-label" for="remember">
+                            @(isPt ? "Manter conectado" : "Keep me signed in")
+                        </label>
+                    </div>
+                    <a href="/Account/ForgotPassword" class="link-primary small">
+                        @(isPt ? "Esqueci minha senha" : "Forgot password")
+                    </a>
+                </div>
+
+                <button id="btnLogin" class="btn btn-primary w-100 py-2">
+                    @(isPt ? "Entrar" : "Sign in")
+                </button>
+
+                <div class="mt-4 text-center footer-muted">
+                    © @DateTime.Now.Year Furlaneti Suporte em Informática LTDA
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Auth JS (correto: sem 'wwwroot') -->
+    <script src="~/js/auth.js" asp-append-version="true"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

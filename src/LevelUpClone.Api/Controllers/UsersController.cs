@@ -17,7 +17,11 @@ public sealed class UsersController : ControllerBase
     [HttpPost("upsert")]
     public ActionResult<IdResponse> Upsert([FromBody] UpsertUserRequest req)
     {
-        var id = _dispatcher.Send(new UpsertUserCommand { UserName = req.UserName, DisplayName = req.DisplayName });
+        var id = _dispatcher.Send(new UpsertUserCommand 
+        { 
+            UserName = req.UserName, 
+            DisplayName = req.DisplayName 
+        });
         return Ok(new IdResponse { Id = id });
     }
 }

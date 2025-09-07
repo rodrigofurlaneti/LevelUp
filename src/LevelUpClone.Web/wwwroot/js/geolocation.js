@@ -10,16 +10,15 @@
     const CACHE_KEY = "fsi.clientGeo";
     const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
-    // --- API base ---
-    // Pode sobrescrever em runtime: window.__FSI_API_BASE = "https://localhost:7121"
-    const DEFAULT_API_PORT = "7121"; // porta https padrão da API no seu dev
+    // API base (padrão 7121). Pode sobrescrever com window.__FSI_API_BASE.
+    const DEFAULT_API_PORT = "7121";
     const API_BASE = (typeof window.__FSI_API_BASE === "string" && window.__FSI_API_BASE.trim())
         ? window.__FSI_API_BASE.trim()
         : `${location.protocol}//${location.hostname}:${DEFAULT_API_PORT}`;
 
     // Endpoints
     const GEO_ENDPOINT = `${API_BASE}/api/geolog`;
-    const DB_ENDPOINT = `${API_BASE}/api/health/database`;
+    const DB_ENDPOINT = `${API_BASE}/api/health/database`; // opcional
 
     // Tempo limite e confiabilidade
     const TIMEOUT_MS = 8000;
@@ -350,7 +349,7 @@
         const op = withTimeout(async (signal) => {
             const res = await fetch(url, Object.assign({
                 mode: "cors",
-                credentials: "omit",             // IMPORTANTE: sem cookies/autz p/ AllowAnyOrigin()
+                credentials: "omit",             // sem cookies (combina com AllowAnyOrigin)
                 cache: "no-store",
                 redirect: "follow",
                 referrerPolicy: "strict-origin-when-cross-origin",
@@ -386,7 +385,7 @@
                 const res = await fetchWithTimeout(url, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    credentials: "omit",         // reforça sem credenciais
+                    credentials: "omit",
                     body: JSON.stringify(body)
                 }, "post_log");
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -404,7 +403,7 @@
     }
 
     // ==========================
-    // Payload em PascalCase
+    // Payload (PascalCase)
     // ==========================
     function toPascalPayload(geo, env, error) {
         return {
@@ -482,7 +481,7 @@
     }
 
     // ==========================
-    // Init
+    // Init (SINCRONIZA a chamada de log com await)
     // ==========================
     let started = false;
 
@@ -504,9 +503,14 @@
         const env = await getEnvInfoAsync();
         const cached = readCache();
 
+        // >>> SINCRONIZAÇÃO: sempre A-GUAR-DA o POST terminar <<<
         if (cached?.coords) {
             setDom({ geo: cached.coords, env });
-            postLog(toPascalPayload(cached.coords, env, null)).catch(() => { });
+            try {
+                await postLog(toPascalPayload(cached.coords, env, null));
+            } catch (e) {
+                derr("postLog (cached) failed", e);
+            }
         } else {
             try {
                 const pos = await getPosition();
@@ -517,7 +521,11 @@
                 await postLog(toPascalPayload(geo, env, null));
             } catch (err) {
                 derr("Geolocation failed", err?.message || err);
-                await postLog(toPascalPayload(null, env, err?.message || String(err))).catch(() => { });
+                try {
+                    await postLog(toPascalPayload(null, env, err?.message || String(err)));
+                } catch (e2) {
+                    derr("postLog (error path) failed", e2);
+                }
             }
         }
 
@@ -526,11 +534,11 @@
     }
 
     if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", init, { once: true });
+        document.addEventListener("DOMContentLoaded", () => { init(); }, { once: true });
     } else {
         init();
     }
 
-    // expõe último snapshot no window e evento custom
+    // expõe snapshot e evento custom
     window.addEventListener("fsi:geo", (e) => dlog("ready (event)", e.detail));
 })();

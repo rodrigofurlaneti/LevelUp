@@ -27,12 +27,13 @@ builder.Host.UseSerilog((ctx, cfg) =>
        .WriteTo.Console();
 });
 
-builder.Services.AddCors(o =>
+// CORS ABERTO (qualquer origem, sem credenciais)
+builder.Services.AddCors(options =>
 {
-    o.AddPolicy("Open", p => p
-        .AllowAnyOrigin()      // ou SetIsOriginAllowed(_ => true)+AllowCredentials()
-        .AllowAnyHeader()
-        .AllowAnyMethod());
+    options.AddDefaultPolicy(policy =>
+        policy.AllowAnyOrigin()
+              .AllowAnyHeader()
+              .AllowAnyMethod());
 });
 
 // JWT
@@ -89,11 +90,10 @@ app.UseSwagger();
 app.UseSwaggerUI();
 app.UseSerilogRequestLogging();
 app.UseHttpsRedirection();
-app.UseCors("Open");            // <- tem que vir ANTES dos endpoints
-app.MapControllers().RequireCors("Open");
 app.UseAuthentication();
 app.UseAuthorization();
-app.MapMethods("{*path}", new[] { "OPTIONS" }, () => Results.Ok())
-   .RequireCors("Open");
-
+app.UseCors(); 
+app.MapControllers(); 
+app.MapMethods("{*path}", new[] { "OPTIONS" }, () => Results.Ok()).RequireCors(); 
+app.MapGet("/", () => Results.Ok(new { name = "LevelUpClone.Api", status = "Up" }));
 app.Run();

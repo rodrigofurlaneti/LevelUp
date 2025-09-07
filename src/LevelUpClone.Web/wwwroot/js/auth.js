@@ -42,6 +42,8 @@ const $ = (id) => document.getElementById(id);
 async function doLogin() {
     const user = $('user').value.trim();
     const pass = $('pass').value.trim();
+    console.log(user);
+    console.log(pass);
     if (!user || !pass) {
         Swal.fire({ icon: 'warning', title: t('Ops', 'Oops'), text: t('Preencha usuário e senha.', 'Fill username and password.') });
         return;
@@ -49,6 +51,7 @@ async function doLogin() {
 
     try {
         const API = window.API_BASE ?? 'https://localhost:7157'; // <-- use https da API
+        console.log(API);
         const res = await fetch(`${API}/api/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

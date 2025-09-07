@@ -6,6 +6,7 @@ using LevelUpClone.Domain.Enums;
 using LevelUpClone.Domain.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using LevelUpClone.Api.Contracts;
 
 namespace LevelUpClone.Api.Controllers;
 

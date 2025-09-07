@@ -1,4 +1,4 @@
-namespace LevelUpClone.Api.Contracts.Responses;
+namespace LevelUpClone.Api.Contracts;
 
 public sealed class IdResponse { public long Id { get; set; } }
 public sealed class DailyScoreResponse { public int TotalPoints { get; set; } }

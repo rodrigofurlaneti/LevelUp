@@ -1,4 +1,4 @@
-namespace LevelUpClone.Api.Contracts.Requests;
+namespace LevelUpClone.Api.Contracts;
 
 public sealed class UpsertUserRequest { public string UserName { get; set; } = ""; public string DisplayName { get; set; } = ""; }
 public sealed class CreateActivityRequest { public int UserId { get; set; } public string ActivityName { get; set; } = ""; public string ActivityKind { get; set; } = "Task"; }

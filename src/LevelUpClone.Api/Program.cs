@@ -10,6 +10,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Serilog;
 
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Serilog (basic)

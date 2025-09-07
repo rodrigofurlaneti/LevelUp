@@ -1,0 +1,73 @@
+@page "/Index"
+@model dynamic
+@{
+    ViewData["Title"] = "Daily Check-in";
+}
+<h4>Daily Check-in</h4>
+<div class="mb-2">
+  <button id="btnScore" class="btn btn-outline-primary btn-sm">Score de Hoje</button>
+</div>
+<div class="row gy-3">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">Fundamentais</div>
+      <div class="card-body d-grid gap-2">
+        <button class="btn btn-success" onclick="logFund('Sleep')">Sleep (+1)</button>
+        <button class="btn btn-success" onclick="logFund('DrinkWater')">Drink Water (+1)</button>
+        <button class="btn btn-success" onclick="logFund('BrushTeeth')">Brush Teeth (+1)</button>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">Custom</div>
+      <div class="card-body">
+        <input id="activityId" class="form-control mb-2" placeholder="ActivityId"/>
+        <button class="btn btn-primary w-100" onclick="logCustom()">Log Custom (+2)</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function authHeader(){
+  const a = JSON.parse(localStorage.getItem('auth')||'{}');
+  return { 'Authorization': 'Bearer '+(a.token||'') , 'Content-Type': 'application/json'};
+}
+const userId = 1;
+const base = 'http://localhost:5157';
+
+async function logFund(code){
+  try{
+    const res = await fetch(`${base}/api/logs/fundamental`, {
+      method:'POST', headers: authHeader(),
+      body: JSON.stringify({ userId, fundamentalCode: code, activityDate: new Date().toISOString().slice(0,10) })
+    });
+    if(!res.ok) throw new Error('Erro ao registrar fundamental');
+    Swal.fire({icon:'success', title:'OK', text:'Registrado!'});
+  }catch(e){ Swal.fire({icon:'error', title:'Erro', text:e.message}); }
+}
+
+async function logCustom(){
+  const id = parseInt(document.getElementById('activityId').value,10) || 0;
+  if(!id){ Swal.fire({icon:'warning', title:'Ops', text:'Informe ActivityId'}); return; }
+  try{
+    const res = await fetch(`${base}/api/logs/custom`, {
+      method:'POST', headers: authHeader(),
+      body: JSON.stringify({ userId, activityId:id, activityDate: new Date().toISOString().slice(0,10) })
+    });
+    if(!res.ok) throw new Error('Erro ao registrar custom');
+    Swal.fire({icon:'success', title:'OK', text:'Registrado!'});
+  }catch(e){ Swal.fire({icon:'error', title:'Erro', text:e.message}); }
+}
+
+document.getElementById('btnScore').addEventListener('click', async ()=>{
+  try{
+    const url = `${base}/api/scores/daily?userId=${userId}&activityDate=${new Date().toISOString().slice(0,10)}`;
+    const res = await fetch(url, { headers: authHeader() });
+    if(!res.ok) throw new Error('Erro ao buscar score');
+    const data = await res.json();
+    Swal.fire({icon:'info', title:'Score', text:'Total: '+data.totalPoints});
+  }catch(e){ Swal.fire({icon:'error', title:'Erro', text:e.message}); }
+});
+</script>

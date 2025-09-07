@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>LevelUpClone.Domain</RootNamespace>
+  </PropertyGroup>
+</Project>

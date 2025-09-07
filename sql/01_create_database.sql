@@ -1,0 +1,2 @@
+IF DB_ID('LevelUp') IS NULL CREATE DATABASE LevelUp;
+GO

@@ -1,0 +1,43 @@
+@page "/"
+@model dynamic
+@{
+    ViewData["Title"] = "Login";
+    var isPt = (Request.Cookies["lang"] ?? "pt") == "pt";
+}
+<div class="row">
+  <div class="col-md-5 mx-auto">
+    <h4 class="mb-3">@(isPt ? "Entrar" : "Sign in")</h4>
+    <div class="mb-3">
+      <label class="form-label">@(isPt ? "Usuário" : "Username")</label>
+      <input id="user" class="form-control" />
+    </div>
+    <div class="mb-3">
+      <label class="form-label">@(isPt ? "Senha" : "Password")</label>
+      <input id="pass" type="password" class="form-control" />
+    </div>
+    <button id="btnLogin" class="btn btn-primary w-100">@(isPt ? "Entrar" : "Login")</button>
+  </div>
+</div>
+
+<script>
+document.getElementById('btnLogin').addEventListener('click', async () => {
+  const user = document.getElementById('user').value.trim();
+  const pass = document.getElementById('pass').value.trim();
+  if(!user || !pass){
+    Swal.fire({icon:'warning', title:'Ops', text:'Preencha usuário e senha.'});
+    return;
+  }
+  try{
+    const res = await fetch('http://localhost:5157/api/auth/login', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ userName:user, password:pass })
+    });
+    if(!res.ok){ throw new Error('Credenciais inválidas'); }
+    const data = await res.json();
+    localStorage.setItem('auth', JSON.stringify({ token:data.token, displayName:data.displayName, exp:new Date(Date.now()+12*3600*1000).toISOString() }));
+    Swal.fire({icon:'success', title:'OK', text:'Login efetuado!'}).then(()=> location.href='/Index');
+  }catch(e){
+    Swal.fire({icon:'error', title:'Erro', text: e.message || 'Falha no login'});
+  }
+});
+</script>

@@ -4,6 +4,7 @@
     {
         public double? Latitude { get; set; }
         public double? Longitude { get; set; }
+        public string? CorrelationId { get; set; }
         public double? AccuracyMeters { get; set; }
         public double? AltitudeMeters { get; set; }
         public double? AltitudeAccuracyMeters { get; set; }

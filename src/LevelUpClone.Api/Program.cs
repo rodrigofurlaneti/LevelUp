@@ -33,6 +33,7 @@ builder.Services.AddCors(options =>
     options.AddDefaultPolicy(policy =>
         policy.AllowAnyOrigin()
               .AllowAnyHeader()
+              .WithHeaders("Content-Type", "X-Correlation-Id") // <- libere o header custom
               .AllowAnyMethod());
 });
 
@@ -84,6 +85,19 @@ builder.Services.AddHealthChecks()
         tags: new[] { "ready" });
 
 var app = builder.Build();
+app.Use(async (context, next) =>
+{
+    if (!context.Request.Headers.TryGetValue("X-Correlation-Id", out var cid) || string.IsNullOrWhiteSpace(cid))
+    {
+        cid = Guid.NewGuid().ToString("D");
+        context.Request.Headers["X-Correlation-Id"] = cid;
+    }
+
+    // devolve no response (útil para troubleshooting no front / Postman)
+    context.Response.Headers["X-Correlation-Id"] = cid.ToString();
+
+    await next();
+});
 app.MapHealthChecks("/health/ready"); 
 app.UseMiddleware<GeoClientLoggingMiddleware>();
 app.UseSwagger();

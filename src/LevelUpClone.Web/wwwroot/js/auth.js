@@ -1,5 +1,9 @@
 ﻿//Route: /Auth/Login
-const API = window.API_BASE ?? 'https://localhost:7157'
+const DEFAULT_API_PORT = "7121";
+const API =
+    (typeof window.__FSI_API_BASE === "string" && window.__FSI_API_BASE.trim())
+        ? window.__FSI_API_BASE.trim()
+        : `${location.protocol}//${location.hostname}:${DEFAULT_API_PORT}`;
 
 // Util: ler cookie
 function getCookie(name) {
@@ -42,20 +46,15 @@ const $ = (id) => document.getElementById(id);
 async function doLogin() {
     const user = $('user').value.trim();
     const pass = $('pass').value.trim();
-    console.log(user);
-    console.log(pass);
     if (!user || !pass) {
         Swal.fire({ icon: 'warning', title: t('Ops', 'Oops'), text: t('Preencha usuário e senha.', 'Fill username and password.') });
         return;
     }
 
     try {
-        const API = window.API_BASE ?? 'https://localhost:7157'; // <-- use https da API
-        console.log(API);
         const res = await fetch(`${API}/api/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            // credentials: 'include', // só se precisar enviar cookies
             body: JSON.stringify({ userName: user, password: pass })
         });
 

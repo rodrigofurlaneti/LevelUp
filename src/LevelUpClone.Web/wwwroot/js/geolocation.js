@@ -1,5 +1,14 @@
 ﻿// src/js/geolocation.js
+// ============================================================================
+// Geolocalização + Telemetria de Ambiente + CorrelationId (frontend)
+// - Um único POST por page load (com retry opcional)
+// - Cache de coordenadas por 24h (localStorage)
+// - SessionId por aba (sessionStorage)
+// - Header "X-Correlation-Id" + envio no body (PascalCase => Dapper/SQL)
+// ============================================================================
+
 (function () {
+    // Evita duplicação do script
     if (window.__FSI_GEO_LOADED__) return;
     window.__FSI_GEO_LOADED__ = true;
 
@@ -9,55 +18,53 @@
     const DEBUG = true;
     const CACHE_KEY = "fsi.clientGeo";
     const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+    const TIMEOUT_MS = 8000;
+    const POST_RETRIES = 2;          // tentativas extras além da primeira
+    const RETRY_BASE_MS = 500;       // backoff exponencial
+    const PREFLIGHT_DIAGNOSTIC = false; // para depurar CORS
 
     // API base (padrão 7121). Pode sobrescrever com window.__FSI_API_BASE.
     const DEFAULT_API_PORT = "7121";
-    const API_BASE = (typeof window.__FSI_API_BASE === "string" && window.__FSI_API_BASE.trim())
-        ? window.__FSI_API_BASE.trim()
-        : `${location.protocol}//${location.hostname}:${DEFAULT_API_PORT}`;
+    const API_BASE =
+        (typeof window.__FSI_API_BASE === "string" && window.__FSI_API_BASE.trim())
+            ? window.__FSI_API_BASE.trim()
+            : `${location.protocol}//${location.hostname}:${DEFAULT_API_PORT}`;
 
     // Endpoints
     const GEO_ENDPOINT = `${API_BASE}/api/geolog`;
-    const DB_ENDPOINT = `${API_BASE}/api/health/database`; // opcional
+    // opcional de health: const DB_ENDPOINT = `${API_BASE}/api/health/database`;
 
-    // Tempo limite e confiabilidade
-    const TIMEOUT_MS = 8000;
-    const PREFLIGHT_DIAGNOSTIC = false;
-    const POST_RETRIES = 2;
-    const RETRY_BASE_MS = 500;
-
-    console.log("[Geo] API_BASE =", API_BASE);
+    // Flags de ciclo
+    let started = false;
 
     // ==========================
-    // Helpers
+    // Log helpers
     // ==========================
     const now = () => Date.now();
     function dlog(...a) { if (DEBUG) console.log("[Geo]", ...a); }
     function derr(...a) { if (DEBUG) console.warn("[Geo:warn]", ...a); }
 
-    function withTimeout(promiseFactory, ms, label = "op") {
-        const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(`${label}_timeout_${ms}ms`), ms);
-        const run = () => Promise.resolve().then(() => promiseFactory(ctrl.signal)).finally(() => clearTimeout(t));
-        return { run, signal: ctrl.signal };
+    // ==========================
+    // CorrelationId & SessionId
+    // ==========================
+    function generateCorrelationId() {
+        return (crypto.randomUUID && crypto.randomUUID())
+            || `cid-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     }
+    const correlationId = generateCorrelationId();
 
-    function isLikelyNetworkError(err) {
-        const msg = String(err && err.message || err || "").toLowerCase();
-        return (
-            msg.includes("networkerror") ||
-            msg.includes("failed to fetch") ||
-            msg.includes("timeout") ||
-            msg.includes("abort") ||
-            msg.includes("net::") ||
-            msg.includes("connection") ||
-            msg.includes("ssl") ||
-            msg.includes("tls")
-        );
+    function getOrCreateSessionId() {
+        let sid = sessionStorage.getItem("sid");
+        if (!sid) {
+            sid = (crypto.randomUUID && crypto.randomUUID())
+                || `sid-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+            sessionStorage.setItem("sid", sid);
+        }
+        return sid;
     }
 
     // ==========================
-    // Bot detection
+    // Bot / Device / UA parsing
     // ==========================
     function detectBot(uaRaw) {
         const ua = (uaRaw || "").toLowerCase();
@@ -72,15 +79,12 @@
         return { isBot: Boolean(match || generic), botName: match || (generic ? "GenericBot" : "") };
     }
 
-    // ==========================
-    // Device detection
-    // ==========================
     function detectDevice(uaRaw, hints) {
         const ua = (uaRaw || "").toLowerCase();
         const chMobile = typeof hints?.mobile === "boolean" ? hints.mobile : null;
         const chModel = hints?.model || "";
 
-        const isIPad = /ipad/.test(ua) || (/macintosh/.test(ua) && 'ontouchstart' in window);
+        const isIPad = /ipad/.test(ua) || (/macintosh/.test(ua) && "ontouchstart" in window);
         const isIPhone = /iphone/.test(ua);
         const isAndroid = /android/.test(ua);
         const isAndroidTablet = isAndroid && !/mobile/.test(ua);
@@ -107,9 +111,6 @@
         return { deviceType, deviceModel, touchPoints };
     }
 
-    // ==========================
-    // UA parse
-    // ==========================
     function parseUA(uaRaw) {
         const ua = (uaRaw || "").trim();
         const rx = (r) => r.exec(ua);
@@ -154,7 +155,11 @@
     // Client Hints + enrich
     // ==========================
     async function getEnvInfoAsync() {
-        const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; } })();
+        const tz = (() => {
+            try { return Intl.DateTimeFormat().resolvedOptions().timeZone || null; }
+            catch { return null; }
+        })();
+
         const connRaw = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
         const connection = connRaw ? {
             effectiveType: connRaw.effectiveType ?? null,
@@ -191,7 +196,7 @@
                 if (ch.architecture) parsed.architecture = parsed.architecture || ch.architecture;
                 else if (ch.bitness === "64") parsed.architecture = parsed.architecture || "x64";
             }
-        } catch { }
+        } catch { /* ignore */ }
 
         const bot = detectBot(ua);
         const device = detectDevice(ua, { mobile: ch.mobile, model: ch.model });
@@ -244,14 +249,22 @@
         } catch (e) { derr("writeCache error", e); }
     }
 
+    // ==========================
+    // Geolocalização
+    // ==========================
     function getPosition(options) {
         return new Promise((resolve, reject) => {
             if (!navigator.geolocation?.getCurrentPosition)
                 return reject(new Error("Geolocation not supported"));
+
             let settled = false;
             const opt = Object.assign({ enableHighAccuracy: true, maximumAge: 600000, timeout: 10000 }, options || {});
             dlog("calling geolocation with", opt);
-            const timer = setTimeout(() => { if (!settled) { settled = true; reject(new Error("Geolocation timeout")); } }, opt.timeout);
+
+            const timer = setTimeout(() => {
+                if (!settled) { settled = true; reject(new Error("Geolocation timeout")); }
+            }, opt.timeout);
+
             navigator.geolocation.getCurrentPosition(
                 pos => { if (!settled) { settled = true; clearTimeout(timer); resolve(pos); } },
                 err => { if (!settled) { settled = true; clearTimeout(timer); reject(err); } },
@@ -278,7 +291,15 @@
     // ==========================
     // DOM helpers (opcionais)
     // ==========================
+    function setIndicator(elId, ok, titleOk, titleErr) {
+        const el = document.getElementById(elId);
+        if (!el) return;
+        el.style.backgroundColor = ok ? "green" : "red";
+        el.title = ok ? titleOk : titleErr;
+    }
+
     function setDom(fields) {
+        // Preenche elementos com [data-geo] se existirem na página
         const flat = {
             lat: fields.geo?.lat ?? null,
             lon: fields.geo?.lon ?? null,
@@ -335,41 +356,65 @@
         window.dispatchEvent(new CustomEvent("fsi:geo", { detail: fields }));
     }
 
-    function setIndicator(elId, ok, titleOk, titleErr) {
-        const el = document.getElementById(elId);
-        if (!el) return;
-        el.style.backgroundColor = ok ? "green" : "red";
-        el.title = ok ? titleOk : titleErr;
-    }
-
     // ==========================
     // Fetch helpers (CORS/timeout/retry)
     // ==========================
-    async function fetchWithTimeout(url, init, label, ms = TIMEOUT_MS) {
-        const op = withTimeout(async (signal) => {
-            const res = await fetch(url, Object.assign({
-                mode: "cors",
-                credentials: "omit",             // sem cookies (combina com AllowAnyOrigin)
-                cache: "no-store",
-                redirect: "follow",
-                referrerPolicy: "strict-origin-when-cross-origin",
-                signal
-            }, init || {}));
-            return res;
-        }, ms, label);
-        return op.run();
+    function isLikelyNetworkError(err) {
+        const msg = String(err && err.message || err || "").toLowerCase();
+        return (
+            msg.includes("networkerror") ||
+            msg.includes("failed to fetch") ||
+            msg.includes("timeout") ||
+            msg.includes("abort") ||
+            msg.includes("net::") ||
+            msg.includes("connection") ||
+            msg.includes("ssl") ||
+            msg.includes("tls")
+        );
+    }
+
+    async function postWithRetry(url, body, tries = POST_RETRIES) {
+        let attempt = 0, lastErr;
+        while (attempt <= tries) {
+            try {
+                const res = await fetch(url, {
+                    method: "POST",
+                    mode: "cors",
+                    credentials: "omit", // importante quando AllowAnyOrigin no CORS
+                    cache: "no-store",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-Correlation-Id": correlationId
+                    },
+                    body: JSON.stringify(body),
+                    referrerPolicy: "strict-origin-when-cross-origin"
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return res;
+            } catch (err) {
+                lastErr = err;
+                if (!isLikelyNetworkError(err) || attempt === tries) break;
+                const wait = RETRY_BASE_MS * Math.pow(2, attempt);
+                dlog(`retry in ${wait}ms (attempt ${attempt + 1}/${tries + 1})`, err);
+                await new Promise(r => setTimeout(r, wait));
+            }
+            attempt++;
+        }
+        throw lastErr;
     }
 
     async function preflightCheck(url) {
         try {
-            const res = await fetchWithTimeout(url, {
+            const res = await fetch(url, {
                 method: "OPTIONS",
+                mode: "cors",
+                credentials: "omit",
                 headers: {
                     "Access-Control-Request-Method": "POST",
-                    "Access-Control-Request-Headers": "Content-Type",
+                    "Access-Control-Request-Headers": "Content-Type, X-Correlation-Id",
                     "Origin": location.origin
                 }
-            }, "preflight");
+            });
             dlog("preflight", res.status, [...res.headers.entries()]);
             return res.ok || res.status === 204;
         } catch (e) {
@@ -378,32 +423,8 @@
         }
     }
 
-    async function postWithRetry(url, body, tries = POST_RETRIES) {
-        let attempt = 0, lastErr;
-        while (attempt <= tries) {
-            try {
-                const res = await fetchWithTimeout(url, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    credentials: "omit",
-                    body: JSON.stringify(body)
-                }, "post_log");
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                return res;
-            } catch (err) {
-                lastErr = err;
-                if (!isLikelyNetworkError(err) || attempt === tries) break;
-                const wait = RETRY_BASE_MS * Math.pow(2, attempt);
-                dlog(`retry in ${wait}ms (attempt ${attempt + 1}/${tries})`, err);
-                await new Promise(r => setTimeout(r, wait));
-            }
-            attempt++;
-        }
-        throw lastErr;
-    }
-
     // ==========================
-    // Payload (PascalCase)
+    // Payload (PascalCase) — De-Para comentado no topo
     // ==========================
     function toPascalPayload(geo, env, error) {
         return {
@@ -428,7 +449,7 @@
             EnvIsBot: env?.isBot ?? null,
             EnvBotName: env?.botName ?? null,
             EnvLanguage: env?.language ?? null,
-            EnvLanguagesJson: env?.languages ?? null, // objeto/array → jsonb no backend
+            EnvLanguagesJson: env?.languages ?? null, // objeto/array → jsonb
             EnvPlatform: env?.platform ?? null,
             EnvIsOnline: env?.online ?? null,
             EnvTimeZone: env?.timeZone ?? null,
@@ -445,18 +466,18 @@
 
             Error: error ?? null,
 
-            SessionId: (sessionStorage.getItem("sid") ||
-                (sessionStorage.setItem("sid", (crypto.randomUUID?.() || (Date.now() + "-" + Math.random().toString(16).slice(2)))), sessionStorage.getItem("sid")))
+            CorrelationId: correlationId,
+            SessionId: getOrCreateSessionId()
         };
     }
 
-    async function postLog(payloadFlatPascal) {
+    async function postLog(payload) {
         try {
             if (PREFLIGHT_DIAGNOSTIC) {
                 const ok = await preflightCheck(GEO_ENDPOINT);
                 if (!ok) throw new Error("Preflight CORS falhou");
             }
-            const res = await postWithRetry(GEO_ENDPOINT, payloadFlatPascal, POST_RETRIES);
+            const res = await postWithRetry(GEO_ENDPOINT, payload, POST_RETRIES);
             setIndicator("api-status-indicator", true, `API OK: ${GEO_ENDPOINT}`, "");
             return res;
         } catch (err) {
@@ -465,26 +486,9 @@
         }
     }
 
-    async function checkDbStatus() {
-        try {
-            const res = await fetchWithTimeout(DB_ENDPOINT, {
-                method: "GET",
-                headers: { "Accept": "application/json" }
-            }, "db_status");
-            const data = await res.json().catch(() => null);
-            const statusOk = res.ok && data?.status?.toLowerCase() === "up";
-            setIndicator("db-status-indicator", statusOk,
-                `DB Online: ${DB_ENDPOINT}`, statusOk ? "" : `DB Offline: ${DB_ENDPOINT}\n${data?.error || data?.status || `HTTP ${res.status}`}`);
-        } catch (err) {
-            setIndicator("db-status-indicator", false, "", `DB Offline: ${DB_ENDPOINT}\n${err.message || err}`);
-        }
-    }
-
     // ==========================
-    // Init (SINCRONIZA a chamada de log com await)
+    // Init (1 request por page load)
     // ==========================
-    let started = false;
-
     function validateApiBase() {
         try {
             const u = new URL(API_BASE);
@@ -497,13 +501,13 @@
     async function init() {
         if (started) return;
         started = true;
-        dlog("init start", { API_BASE, GEO_ENDPOINT, DB_ENDPOINT });
+        dlog("init start", { API_BASE, GEO_ENDPOINT });
         validateApiBase();
 
         const env = await getEnvInfoAsync();
         const cached = readCache();
 
-        // >>> SINCRONIZAÇÃO: sempre A-GUAR-DA o POST terminar <<<
+        // Sempre faz um único POST (usa cache se existir)
         if (cached?.coords) {
             setDom({ geo: cached.coords, env });
             try {
@@ -529,8 +533,8 @@
             }
         }
 
-        // opcional: health-check
-        checkDbStatus();
+        // Health opcional
+        // try { await checkDbStatus(); } catch {}
     }
 
     if (document.readyState === "loading") {
@@ -539,6 +543,6 @@
         init();
     }
 
-    // expõe snapshot e evento custom
+    // Exposição (debug)
     window.addEventListener("fsi:geo", (e) => dlog("ready (event)", e.detail));
 })();

@@ -1,12 +1,14 @@
 using LevelUpClone.Api.Contracts.Requests;
 using LevelUpClone.Api.Contracts.Responses;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Authorization;
 using LevelUpClone.Application.Abstractions;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
+using Npgsql;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Dapper;
 
 namespace LevelUpClone.Api.Controllers
 {
@@ -14,7 +16,6 @@ namespace LevelUpClone.Api.Controllers
     [Route("api/auth")]
     public sealed class AuthController(IConfiguration configuration, IUserService userService) : ControllerBase
     {
-        // Com construtor primário, inicialize os campos assim:
         private readonly IConfiguration _configuration = configuration;
         private readonly IUserService _userService = userService;
 
@@ -29,7 +30,11 @@ namespace LevelUpClone.Api.Controllers
             if (string.IsNullOrWhiteSpace(req.Password))
                 return BadRequest("Password inválido.");
 
-            var ok = await _userService.ValidateAsync(req.UserName, req.Password);
+            using var conn = new NpgsqlConnection(connStr);
+            conn.Open();
+            conn.Execute(@"SET search_path TO dbleveluser, public;");
+            var ok = await _userService.ValidateAsync(req.UserName.Trim(), req.Password.Trim());
+
             if (!ok)
                 return Unauthorized();
 

@@ -122,7 +122,12 @@ namespace LevelUpClone.Infrastructure.Repositories.Postgres
     public sealed class UserServicePg : IUserService
     {
         private readonly PostgresConnectionFactory _factory;
-        public UserServicePg(PostgresConnectionFactory factory) => _factory = factory;
+        private readonly IPasswordHasher _passwordHasher;
+        public UserServicePg(PostgresConnectionFactory factory, IPasswordHasher passwordHasher)
+        {
+            _passwordHasher = passwordHasher;
+            _factory = factory;
+        }
 
         public async Task<bool> ValidateAsync(string userName, string password)
         {
@@ -139,12 +144,12 @@ namespace LevelUpClone.Infrastructure.Repositories.Postgres
                 new { userName });
 
             if (row.PasswordHash is null || !row.IsActive) return false;
-            return PasswordHasher.Verify(password, row.PasswordHash);
+            return _passwordHasher.Verify(password, row.PasswordHash);
         }
 
         public async Task SetPasswordAsync(string userName, string newPassword)
         {
-            var hash = PasswordHasher.Hash(newPassword);
+            var hash = _passwordHasher.Hash(newPassword);
             using var conn = _factory.Open();
             await conn.ExecuteAsync(
                 """

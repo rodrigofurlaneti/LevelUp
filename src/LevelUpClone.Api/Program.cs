@@ -1,4 +1,6 @@
-﻿using LevelUpClone.Api.Middlewares;
+﻿using System.Text;
+using System.Text.Json;
+using LevelUpClone.Api.Middlewares;
 using LevelUpClone.Application.Abstractions;
 using LevelUpClone.Application.Cqrs.Activities;
 using LevelUpClone.Application.Cqrs.Logs;
@@ -8,106 +10,168 @@ using LevelUpClone.Domain.Interfaces;
 using LevelUpClone.Infrastructure.Diagnostics;
 using LevelUpClone.Infrastructure.Persistence;
 using LevelUpClone.Infrastructure.Repositories.Postgres;
-using LevelUpClone.Infrastructure.Repositories.SqlServer;
-using LevelUpClone.Infrastructure.Security;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.Extensions.Configuration;
-using LevelUpClone.Infrastructure.Diagnostics;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
 using Serilog;
-using System.Text;
+using FluentValidation;
+using FluentValidation.AspNetCore;
+using LevelUpClone.Infrastructure.Security;
 using static LevelUpClone.Infrastructure.Repositories.Postgres.UserServicePg;
 
-var builder = WebApplication.CreateBuilder(args);
-
-// Serilog (básico)
-builder.Host.UseSerilog((ctx, cfg) =>
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console()
+    .Enrich.FromLogContext()
+    .CreateLogger();
+try
 {
-    cfg.ReadFrom.Configuration(ctx.Configuration)
-       .WriteTo.Console();
-});
+    var builder = WebApplication.CreateBuilder(args);
+    var config = builder.Configuration;
 
-// CORS ABERTO (qualquer origem, sem credenciais)
-builder.Services.AddCors(options =>
-{
-    options.AddDefaultPolicy(policy =>
-        policy.AllowAnyOrigin()
-              .AllowAnyHeader()
-              .WithHeaders("Content-Type", "X-Correlation-Id") // <- libere o header custom
-              .AllowAnyMethod());
-});
+    // Serilog básico
+    builder.Host.UseSerilog((ctx, lc) => lc
+        .ReadFrom.Configuration(ctx.Configuration)
+        .Enrich.FromLogContext()
+        .WriteTo.Console());
 
-// JWT
-builder.Services
-    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(opts =>
+    // Controllers + Validation
+    builder.Services.AddControllers();
+    builder.Services.AddFluentValidationAutoValidation();
+    builder.Services.AddValidatorsFromAssembly(typeof(Program).Assembly);
+
+    // JWT
+    // Swagger (uma única vez)
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen(opt =>
     {
-        var jwt = builder.Configuration.GetSection("Jwt");
-        opts.TokenValidationParameters = new TokenValidationParameters
+        opt.SwaggerDoc("v1", new OpenApiInfo { Title = "LevelUp API", Version = "v1" });
+        opt.CustomSchemaIds(t => t.FullName);
+
+        var securityScheme = new OpenApiSecurityScheme
         {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = jwt["Issuer"],
-            ValidAudience = jwt["Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt["Key"]!)),
-            ClockSkew = TimeSpan.Zero
+            Name = "Authorization",
+            Description = "Insira o token JWT como: Bearer {seu_token}",
+            In = ParameterLocation.Header,
+            Type = SecuritySchemeType.Http,
+            Scheme = "bearer",
+            BearerFormat = "JWT",
+            Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
         };
+        opt.AddSecurityDefinition("Bearer", securityScheme);
+        opt.AddSecurityRequirement(new OpenApiSecurityRequirement { { securityScheme, Array.Empty<string>() } });
     });
 
-builder.Services.AddAuthorization();
-builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-
-var configuration = builder.Configuration;
-var getConnectionString = configuration.GetConnectionString("Postgres")
-?? configuration["Database:PostGres"] ?? throw new InvalidOperationException("Connection string Postgres não configurada.");
-
-builder.Services.AddSingleton(new PostgresConnectionFactory(getConnectionString));
-builder.Services.AddSingleton<DbHealthChecker>();
-builder.Services.AddScoped<IUserService, UserServicePg>();
-builder.Services.AddTransient<IUserRepository, UserRepositoryPg>();
-builder.Services.AddTransient<IActivityRepository, ActivityRepositoryPg>();
-builder.Services.AddTransient<IActivityLogRepository, ActivityLogRepositoryPg>();
-builder.Services.AddSingleton<IDispatcher, CommandDispatcher>();
-builder.Services.AddTransient<UpsertUserHandler>();
-builder.Services.AddTransient<CreateActivityHandler>();
-builder.Services.AddTransient<LogFundamentalHandler>();
-builder.Services.AddTransient<LogCustomHandler>();
-builder.Services.AddTransient<GetDailyScoreHandler>();
-builder.Services.AddTransient<IGeoClientLogRepository, GeoClientLogRepositoryPg>();
-builder.Services.AddHttpContextAccessor();
-builder.Services.AddHealthChecks()
-    .AddNpgSql(
-        connectionString: getConnectionString,
-        name: "postgres",
-        tags: new[] { "ready" });
-
-var app = builder.Build();
-app.Use(async (context, next) =>
-{
-    if (!context.Request.Headers.TryGetValue("X-Correlation-Id", out var cid) || string.IsNullOrWhiteSpace(cid))
+    // CORS
+    builder.Services.AddCors(opt =>
     {
-        cid = Guid.NewGuid().ToString("D");
-        context.Request.Headers["X-Correlation-Id"] = cid;
-    }
+        opt.AddPolicy("AllowAll", p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod());
+    });
 
-    // devolve no response (útil para troubleshooting no front / Postman)
-    context.Response.Headers["X-Correlation-Id"] = cid.ToString();
+    // ===== JWT =====
+    var jwt = config.GetSection("Jwt");
+    var issuer = jwt["Issuer"] ?? "LevelUp";
+    var audience = jwt["Audience"] ?? "LevelUpClients";
+    var keyBytes = Encoding.UTF8.GetBytes(jwt["Key"] ?? "p3rsonalFinance!Portable-2025-StrongSecret-Key-DoNotShare!!");
 
-    await next();
-});
-app.MapHealthChecks("/health/ready"); 
-app.UseMiddleware<GeoClientLoggingMiddleware>();
-app.UseSwagger();
-app.UseSwaggerUI();
-app.UseSerilogRequestLogging();
-app.UseHttpsRedirection();
-app.UseAuthentication();
-app.UseAuthorization();
-app.UseCors(); 
-app.MapControllers(); 
-app.MapMethods("{*path}", new[] { "OPTIONS" }, () => Results.Ok()).RequireCors(); 
-app.MapGet("/", () => Results.Ok(new { name = "LevelUpClone.Api", status = "Up" }));
-app.Run();
+    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddJwtBearer(o =>
+        {
+            o.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidateAudience = true,
+                ValidateIssuerSigningKey = true,
+                ValidIssuer = issuer,
+                ValidAudience = audience,
+                IssuerSigningKey = new SymmetricSecurityKey(keyBytes),
+                ClockSkew = TimeSpan.Zero
+            };
+        });
+
+    builder.Services.AddAuthorization();
+
+    builder.Services.AddControllers();
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSingleton<IPasswordHasher, PasswordHasher>();
+
+    // Conexão / Health
+    var configuration = builder.Configuration;
+    var pgConnString = configuration.GetConnectionString("Postgres")
+                     ?? configuration["Database:PostGres"]
+                     ?? throw new InvalidOperationException("Connection string Postgres não configurada.");
+
+    builder.Services.AddSingleton(new PostgresConnectionFactory(pgConnString));
+    builder.Services.AddSingleton<DbHealthChecker>();
+
+    // Kestrel ouvindo na 5002 (atrás do Nginx)
+    builder.WebHost.UseUrls("http://localhost:5002");
+
+    // DI de Repositórios/Serviços/Handlers
+    builder.Services.AddScoped<IUserService, UserServicePg>();
+    builder.Services.AddTransient<IUserRepository, UserRepositoryPg>();
+    builder.Services.AddTransient<IActivityRepository, ActivityRepositoryPg>();
+    builder.Services.AddTransient<IActivityLogRepository, ActivityLogRepositoryPg>();
+    builder.Services.AddTransient<IGeoClientLogRepository, GeoClientLogRepositoryPg>();
+
+    builder.Services.AddSingleton<IDispatcher, CommandDispatcher>();
+    builder.Services.AddTransient<UpsertUserHandler>();
+    builder.Services.AddTransient<CreateActivityHandler>();
+    builder.Services.AddTransient<LogFundamentalHandler>();
+    builder.Services.AddTransient<LogCustomHandler>();
+    builder.Services.AddTransient<GetDailyScoreHandler>();
+
+    builder.Services.AddHttpContextAccessor();
+
+    // Health checks: live (processo) e ready (Postgres)
+    builder.Services.AddHealthChecks()
+        .AddCheck("self", () => HealthCheckResult.Healthy("OK"), tags: new[] { "live" })
+        .AddNpgSql(connectionString: pgConnString, name: "postgres", tags: new[] { "ready" });
+
+    var app = builder.Build();
+
+    // Respeitar cabeçalhos do proxy (X-Forwarded-Proto/For)
+    app.UseForwardedHeaders(new ForwardedHeadersOptions
+    {
+        ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+    });
+
+    // Middleware de exceções (GeoClientLoggingMiddleware)
+    app.UseMiddleware<GeoClientLoggingMiddleware>();
+
+    // Middleware de exceções (global)
+    app.UseMiddleware<ExceptionHandlingMiddleware>();
+
+    // Swagger SEM condicionar por ambiente
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("v1/swagger.json", "LevelUp API v1");
+    });
+
+    app.UseSerilogRequestLogging();
+
+    // Ordem recomendada
+    // NÃO usar UseHttpsRedirection aqui (TLS termina no Nginx)
+    app.UseCors("AllowAll");
+    app.UseAuthentication();
+    app.UseAuthorization();
+
+    app.MapControllers();
+    app.MapHealthChecks("/health");
+
+    // Ping básico
+    app.MapGet("/", () => Results.Ok(new { name = "FSI.PersonalFinancePortable.Api", status = "Up" }));
+
+    app.Run();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Falha fatal na inicialização do host");
+}
+finally
+{
+    Log.CloseAndFlush();
+}
